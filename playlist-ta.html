@@ -1,0 +1,94 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>SoSo Cycles Tacoma Playlist</title>
+  <style>
+    * { margin: 0; padding: 0; box-sizing: border-box; }
+    html, body {
+      width: 100%; height: 100%;
+      background: #000;
+      overflow: hidden;
+    }
+    #player {
+      position: fixed;
+      top: 0; left: 0;
+      width: 100%; height: 100%;
+    }
+  </style>
+</head>
+<body>
+
+  <div id="player"></div>
+
+  <script>
+    // ─── CONFIGURATION ───────────────────────────────────────────────────────
+    var PLAYLIST_ID = "PLxe5MHY9FeH27Xg5fOrrEV0IfK7Qaus6o";  // Tacoma (TA)
+    // ─────────────────────────────────────────────────────────────────────────
+
+    var player;
+
+    // Load the YouTube IFrame API
+    var tag = document.createElement("script");
+    tag.src = "https://www.youtube.com/iframe_api";
+    document.head.appendChild(tag);
+
+    // Called automatically by YouTube once their API script loads
+    function onYouTubeIframeAPIReady() {
+      player = new YT.Player("player", {
+        width: "100%",
+        height: "100%",
+        playerVars: {
+          listType:       "playlist",
+          list:           PLAYLIST_ID,
+          autoplay:       1,        // start playing automatically
+          controls:       0,        // hide play/pause controls
+          modestbranding: 1,        // minimal YouTube branding
+          rel:            0,        // don't show related videos at end
+          iv_load_policy: 3,        // hide video annotations
+          showinfo:       0,        // hide video title bar
+          fs:             0,        // hide fullscreen button
+          loop:           1,        // loop the playlist
+          mute:           0
+        },
+        events: {
+          onReady:       onPlayerReady,
+          onStateChange: onPlayerStateChange,
+          onError:       onPlayerError
+        }
+      });
+    }
+
+    function onPlayerReady(event) {
+      // Shuffle the playlist via the API (more reliable than a URL parameter)
+      event.target.setShuffle(true);
+      event.target.setLoop(true);
+      event.target.playVideo();
+    }
+
+    function onPlayerStateChange(event) {
+      // YT.PlayerState.ENDED = 0
+      // If somehow the video ends without auto-advancing, push to next
+      if (event.data === YT.PlayerState.ENDED) {
+        player.nextVideo();
+      }
+
+      // YT.PlayerState.CUED = 5 — video loaded but not played, nudge it
+      if (event.data === YT.PlayerState.CUED) {
+        player.playVideo();
+      }
+    }
+
+    function onPlayerError(event) {
+      // If a video errors (private, removed, etc.), skip to the next one
+      // Error codes: 2=bad param, 5=HTML5 error, 100=not found, 101/150=embedding not allowed
+      console.warn("YouTube player error, code:", event.data);
+      setTimeout(function() {
+        player.nextVideo();
+      }, 2000);
+    }
+  </script>
+
+</body>
+</html>
