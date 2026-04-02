@@ -28,6 +28,42 @@
     // ─────────────────────────────────────────────────────────────────────────
 
     var player;
+    var watchdogInterval;
+    var bufferStallCount = 0;
+
+    // ─── WATCHDOG ─────────────────────────────────────────────────────────────
+    // Runs every 30 seconds and checks if the player has stalled.
+    // Handles YouTube's "Are you still watching?" pause and network hiccups.
+    function startWatchdog() {
+      watchdogInterval = setInterval(function() {
+        if (!player || typeof player.getPlayerState !== "function") return;
+        var state = player.getPlayerState();
+        // States: -1=unstarted, 0=ended, 1=playing, 2=paused, 3=buffering, 5=cued
+        if (state === 2) {
+          // Paused — likely the "Still watching?" prompt. Resume.
+          player.playVideo();
+          bufferStallCount = 0;
+        } else if (state === 0) {
+          // Ended without advancing. Push to next.
+          player.nextVideo();
+          bufferStallCount = 0;
+        } else if (state === 3) {
+          // Buffering — tolerate briefly but if stuck for two cycles (60s), skip ahead.
+          bufferStallCount++;
+          if (bufferStallCount >= 2) {
+            player.nextVideo();
+            bufferStallCount = 0;
+          }
+        } else if (state === -1 || state === 5) {
+          // Unstarted or cued but not playing — nudge it.
+          player.playVideo();
+          bufferStallCount = 0;
+        } else {
+          bufferStallCount = 0; // Playing normally — reset stall counter
+        }
+      }, 30000); // check every 30 seconds
+    }
+    // ─────────────────────────────────────────────────────────────────────────
 
     // Load the YouTube IFrame API
     var tag = document.createElement("script");
@@ -61,11 +97,12 @@
     }
 
     function onPlayerReady(event) {
-      // Shuffle the playlist via the API (more reliable than a URL parameter)
       event.target.setShuffle(true);
       event.target.setLoop(true);
-      event.target.mute();       // belt-and-suspenders mute
+      event.target.mute();
+      event.target.setPlaybackQuality("large"); // cap at 480p for smoother streaming
       event.target.playVideo();
+      startWatchdog(); // begin stall detection
     }
 
     function onPlayerStateChange(event) {
