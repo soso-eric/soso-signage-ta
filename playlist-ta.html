@@ -101,7 +101,16 @@
       event.target.setLoop(true);
       event.target.mute();
       event.target.setPlaybackQuality("large"); // cap at 480p for smoother streaming
-      event.target.playVideo();
+
+      // Jump to a random position so every reload starts on a different video
+      var playlist = event.target.getPlaylist();
+      if (playlist && playlist.length > 1) {
+        var randomIndex = Math.floor(Math.random() * playlist.length);
+        event.target.playVideoAt(randomIndex);
+      } else {
+        event.target.playVideo();
+      }
+
       startWatchdog(); // begin stall detection
     }
 
