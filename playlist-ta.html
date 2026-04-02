@@ -49,8 +49,8 @@
           iv_load_policy: 3,        // hide video annotations
           showinfo:       0,        // hide video title bar
           fs:             0,        // hide fullscreen button
-          loop:           1,        // loop the playlist
-          mute:           0
+          loop:           1,
+          mute:           1         // muted = browsers allow autoplay
         },
         events: {
           onReady:       onPlayerReady,
@@ -64,6 +64,7 @@
       // Shuffle the playlist via the API (more reliable than a URL parameter)
       event.target.setShuffle(true);
       event.target.setLoop(true);
+      event.target.mute();       // belt-and-suspenders mute
       event.target.playVideo();
     }
 
