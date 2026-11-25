@@ -25,49 +25,83 @@
   <script>
     // ─── CONFIGURATION ───────────────────────────────────────────────────────
     var PLAYLIST_ID = "PLxe5MHY9FeH27Xg5fOrrEV0IfK7Qaus6o";  // Tacoma (TA)
+
+    var CHECK_EVERY_MS      = 30 * 1000;      // how often the watchdog looks at the player
+    var STARTUP_LIMIT_MS    = 90 * 1000;      // reload if YouTube hasn't started by now
+    var NOT_PLAYING_LIMIT_MS = 2 * 60 * 1000; // reload if nothing has played for this long
+    var MAX_ERRORS_IN_A_ROW = 5;              // reload after this many failed videos in a row
+    var NIGHTLY_RELOAD_HOUR = 3;              // fresh restart once a day at 3 AM (display's local time)
     // ─────────────────────────────────────────────────────────────────────────
 
     var player;
-    var watchdogInterval;
+    var pageLoadedAt   = Date.now();
+    var lastPlayingAt  = Date.now();  // last time we saw the video actually playing
     var bufferStallCount = 0;
+    var errorsInARow   = 0;
+    var reloading      = false;
 
-    // ─── WATCHDOG ─────────────────────────────────────────────────────────────
-    // Runs every 30 seconds and checks if the player has stalled.
-    // Handles YouTube's "Are you still watching?" pause and network hiccups.
-    function startWatchdog() {
-      watchdogInterval = setInterval(function() {
-        if (!player || typeof player.getPlayerState !== "function") return;
-        var state = player.getPlayerState();
-        // States: -1=unstarted, 0=ended, 1=playing, 2=paused, 3=buffering, 5=cued
-        if (state === 2) {
-          // Paused — likely the "Still watching?" prompt. Resume.
-          player.playVideo();
-          bufferStallCount = 0;
-        } else if (state === 0) {
-          // Ended without advancing. Push to next.
-          player.nextVideo();
-          bufferStallCount = 0;
-        } else if (state === 3) {
-          // Buffering — tolerate briefly but if stuck for two cycles (60s), skip ahead.
-          bufferStallCount++;
-          if (bufferStallCount >= 2) {
-            player.nextVideo();
-            bufferStallCount = 0;
-          }
-        } else if (state === -1 || state === 5) {
-          // Unstarted or cued but not playing — nudge it.
-          player.playVideo();
-          bufferStallCount = 0;
-        } else {
-          bufferStallCount = 0; // Playing normally — reset stall counter
-        }
-      }, 30000); // check every 30 seconds
+    function reloadPage(reason) {
+      if (reloading) return;
+      reloading = true;
+      console.warn("Reloading player page:", reason);
+      // Adding a timestamp makes sure the display fetches a fresh copy, not a cached one
+      var base = location.href.split("#")[0].split("?")[0];
+      location.replace(base + "?r=" + Date.now());
     }
-    // ─────────────────────────────────────────────────────────────────────────
+
+    // ─── SAFETY NET 1: YouTube never loads ────────────────────────────────────
+    setTimeout(function() {
+      if (!player || typeof player.getPlayerState !== "function") {
+        reloadPage("YouTube player did not load");
+      }
+    }, STARTUP_LIMIT_MS);
+
+    // ─── SAFETY NET 2: watchdog for stalls, pauses, and frozen video ──────────
+    // Player states: -1=unstarted, 0=ended, 1=playing, 2=paused, 3=buffering, 5=cued
+    setInterval(function() {
+      if (!player || typeof player.getPlayerState !== "function") return;
+      var state = player.getPlayerState();
+
+      if (state === 1) {
+        lastPlayingAt = Date.now();
+        bufferStallCount = 0;
+      } else if (state === 2) {
+        player.playVideo();                 // paused, e.g. YouTube's "Still watching?" prompt
+      } else if (state === 0) {
+        player.nextVideo();                 // ended without advancing
+      } else if (state === 3) {
+        bufferStallCount++;                 // buffering: allow ~60 seconds, then skip ahead
+        if (bufferStallCount >= 2) { player.nextVideo(); bufferStallCount = 0; }
+      } else {
+        player.playVideo();                 // unstarted or cued: nudge it
+      }
+
+      // If nudging hasn't worked for 2 minutes, start completely fresh
+      if (Date.now() - lastPlayingAt > NOT_PLAYING_LIMIT_MS) {
+        reloadPage("nothing has played for 2 minutes");
+      }
+    }, CHECK_EVERY_MS);
+
+    // ─── SAFETY NET 3: fresh restart once a day ──────────────────────────────
+    setInterval(function() {
+      var now = new Date();
+      var runningForAnHour = Date.now() - pageLoadedAt > 60 * 60 * 1000;
+      if (now.getHours() === NIGHTLY_RELOAD_HOUR && runningForAnHour) {
+        reloadPage("nightly restart");
+      }
+    }, 5 * 60 * 1000);
+
+    // ─── SAFETY NET 4: internet drops and comes back ─────────────────────────
+    window.addEventListener("online", function() {
+      setTimeout(function() { reloadPage("internet connection restored"); }, 10000);
+    });
 
     // Load the YouTube IFrame API
     var tag = document.createElement("script");
     tag.src = "https://www.youtube.com/iframe_api";
+    tag.onerror = function() {
+      setTimeout(function() { reloadPage("could not reach YouTube"); }, 30000);
+    };
     document.head.appendChild(tag);
 
     // Called automatically by YouTube once their API script loads
@@ -83,10 +117,10 @@
           modestbranding: 1,        // minimal YouTube branding
           rel:            0,        // don't show related videos at end
           iv_load_policy: 3,        // hide video annotations
-          showinfo:       0,        // hide video title bar
           fs:             0,        // hide fullscreen button
           loop:           1,
-          mute:           1         // muted = browsers allow autoplay
+          mute:           1,        // muted = browsers allow autoplay
+          playsinline:    1
         },
         events: {
           onReady:       onPlayerReady,
@@ -97,43 +131,37 @@
     }
 
     function onPlayerReady(event) {
+      event.target.mute();
       event.target.setShuffle(true);
       event.target.setLoop(true);
-      event.target.mute();
-      event.target.setPlaybackQuality("large"); // cap at 480p for smoother streaming
 
-      // Jump to a random position so every reload starts on a different video
+      // Start at a random video so each restart shows something different
       var playlist = event.target.getPlaylist();
       if (playlist && playlist.length > 1) {
-        var randomIndex = Math.floor(Math.random() * playlist.length);
-        event.target.playVideoAt(randomIndex);
+        event.target.playVideoAt(Math.floor(Math.random() * playlist.length));
       } else {
         event.target.playVideo();
       }
-
-      startWatchdog(); // begin stall detection
     }
 
     function onPlayerStateChange(event) {
-      // YT.PlayerState.ENDED = 0
-      // If somehow the video ends without auto-advancing, push to next
-      if (event.data === YT.PlayerState.ENDED) {
-        player.nextVideo();
+      if (event.data === YT.PlayerState.PLAYING) {
+        lastPlayingAt = Date.now();
+        errorsInARow = 0;
       }
-
-      // YT.PlayerState.CUED = 5 — video loaded but not played, nudge it
-      if (event.data === YT.PlayerState.CUED) {
-        player.playVideo();
-      }
+      if (event.data === YT.PlayerState.ENDED) player.nextVideo();
+      if (event.data === YT.PlayerState.CUED)  player.playVideo();
     }
 
     function onPlayerError(event) {
-      // If a video errors (private, removed, etc.), skip to the next one
-      // Error codes: 2=bad param, 5=HTML5 error, 100=not found, 101/150=embedding not allowed
+      // Codes: 2=bad param, 5=HTML5 error, 100=not found, 101/150=embedding not allowed
       console.warn("YouTube player error, code:", event.data);
-      setTimeout(function() {
-        player.nextVideo();
-      }, 2000);
+      errorsInARow++;
+      if (errorsInARow >= MAX_ERRORS_IN_A_ROW) {
+        reloadPage(errorsInARow + " videos failed in a row");
+        return;
+      }
+      setTimeout(function() { player.nextVideo(); }, 2000);
     }
   </script>
 
